@@ -65,10 +65,12 @@ jobs:
           sudo pmset -a autopoweroff 0 standby 0 || true
           defaults -currentHost write com.apple.screensaver idleTime 0 || true
 
-          echo "== Đặt resolution 1920x1080 (VM là VMware, cần set rõ) =="
-          if [ -x "/Library/Application Support/VMware Tools/vmware-resolutionSet" ]; then
-            sudo "/Library/Application Support/VMware Tools/vmware-resolutionSet" 1920 1080 || true
-          fi
+          echo "== Đặt wallpaper (runner image mặc định là ảnh ĐEN đặc ->) =="
+          # Nguyên nhân "màn hình đen": wallpaper mặc định của runner image là
+          # Solid Colors/Black.png, desktop không có icon nên trông như chết.
+          WALLPAPER="/System/Library/Desktop Pictures/Sonoma.heic"
+          sudo launchctl asuser 501 sudo -u runner osascript -e "tell application \"System Events\" to set picture of every desktop to \"$WALLPAPER\"" 2>/dev/null || true
+          sudo launchctl asuser 1001 sudo -u vncadmin osascript -e "tell application \"System Events\" to set picture of every desktop to \"$WALLPAPER\"" 2>/dev/null || true
 
           echo "== Restart console để auto-login tạo phiên GUI mới cho vncadmin =="
           sudo caffeinate -u -t 5 || true
