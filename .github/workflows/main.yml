@@ -28,10 +28,10 @@ jobs:
           sudo "$KICKSTART" -configure -allowAccessFor -allUsers -privs -all
           sudo "$KICKSTART" -configure -access -on
           sudo "$KICKSTART" -configure -clientopts -setvnclegacy -vncLegacy yes -setvncpw -vncpw "$VNC_PW"
+          sudo "$KICKSTART" -restart -agent
           sudo "$KICKSTART" -activate
           # KHÔNG dùng -restart -console: nó sẽ kill phiên desktop của runner
           # và làm máy kẹt ở login window ảo (vfb) không render -> màn hình đen
-          sudo "$KICKSTART" -restart -agent
 
           echo "== Cấp quyền TCC ScreenCapture cho screensharing (BẮT BUỘC) =="
           # macOS 13+: daemon/agent screen sharing cần quyền Screen Recording.
