@@ -1,0 +1,125 @@
+name: macOS RDP Remote Access
+
+on:
+  workflow_dispatch:
+    inputs:
+      passphrase:
+        description: 'Mật khẩu VNC (tối thiểu 6 ký tự)'
+        required: true
+        default: 'Admin123'
+
+jobs:
+  rdp:
+    name: Start macOS RDP
+    runs-on: macos-15
+    timeout-minutes: 360 # Giữ máy chạy tối đa 6 tiếng (hoặc đến khi bạn hủy)
+    
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v6
+
+      - name: 1. Kích hoạt tính năng Screen Sharing (VNC) có sẵn trên macOS
+        env:
+          VNC_PW: ${{ github.event.inputs.passphrase }}
+        run: |
+          KICKSTART=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
+
+          echo "== Bật Screen Sharing cho TẤT CẢ user, full quyền =="
+          sudo "$KICKSTART" -configure -allowAccessFor -allUsers -privs -all -access -on
+          sudo "$KICKSTART" -activate
+
+          echo "== Bật VNC legacy + đặt mật khẩu VNC =="
+          sudo "$KICKSTART" -configure -clientopts -setvnclegacy -vncLegacy yes -setvncpw -vncpw "$VNC_PW"
+          sudo "$KICKSTART" -restart -agent
+
+          echo "== Đặt mật khẩu tài khoản (dùng khi login console) =="
+          # macOS 15: user runner có SecureToken nên dscl . -passwd bị từ chối.
+          # Dùng sysadminctl - công cụ chuẩn của Apple để reset mật khẩu.
+          PW_USER="runner"
+          if sudo sysadminctl -resetPasswordFor runner -newPassword "$VNC_PW" 2>&1; then
+            echo "Đã đặt mật khẩu cho user runner (sysadminctl)."
+          else
+            echo "WARN: sysadminctl thất bại cho runner, thử tạo user 'vncadmin' mới..."
+            sudo sysadminctl -addUser vncadmin -password "$VNC_PW" -admin 2>&1 || true
+            sudo dscl . -create /Users/vncadmin IsAdmin 1 2>/dev/null || true
+            PW_USER="vncadmin"
+          fi
+          echo "PW_USER=$PW_USER" >> "$GITHUB_ENV"
+
+          # Ép màn hình không ngủ (đánh thức màn hình)
+          sudo caffeinate -u -t 5 || true
+          sudo pmset -a sleep 0 displaysleep 0 disksleep 0 || true
+          sudo pmset -a autopoweroff 0 standby 0 || true
+          defaults -currentHost write com.apple.screensaver idleTime 0 || true
+
+          echo "== Cấu hình AUTO-LOGIN cho $PW_USER để khởi động phiên GUI =="
+          # Tạo file /etc/kcpassword (chứa mật khẩu đã mã hóa XOR của macOS)
+          python3 - <<'EOF'
+import os
+pw = os.environ.get('VNC_PW', '')
+key = [0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F]
+encoded = [ord(c) ^ key[i % len(key)] for i, c in enumerate(pw)]
+while len(encoded) % 12 != 0 or len(encoded) == 0:
+    encoded.append(key[len(encoded) % len(key)])
+with open('/tmp/kcpassword', 'wb') as f:
+    f.write(bytes(encoded))
+EOF
+          sudo mv /tmp/kcpassword /etc/kcpassword
+          sudo chown root:wheel /etc/kcpassword
+          sudo chmod 600 /etc/kcpassword
+          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser "$PW_USER"
+
+          # Restart loginwindow để áp dụng auto-login nếu phiên GUI chưa chạy
+          if ! pgrep -x WindowServer >/dev/null; then
+            echo "WindowServer chưa chạy -> restart loginwindow để auto-login..."
+            sudo killall -HUP loginwindow 2>/dev/null || true
+            sleep 8
+          fi
+
+          echo "== CHẨN ĐOÁN =="
+          echo "Console owner: $(stat -f '%Su' /dev/console 2>/dev/null || echo 'none')"
+          echo "AutoLogin user: $(sudo defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || echo 'none')"
+          pgrep -x WindowServer >/dev/null && echo "WindowServer: ĐANG CHẠY (phiên GUI đã mở!)" || echo "WindowServer: CHƯA CHẠY"
+          who || true
+
+          IP=$(ipconfig getifaddr en0)
+          echo "Local IP: $IP"
+
+      - name: 2. Cài đặt và kết nối Tailscale
+        id: tailscale
+        uses: tailscale/github-action@v3
+        with:
+          authkey: ${{ secrets.TS_AUTHKEY }}
+          args: --hostname=macos-rdp-runner
+
+      - name: 3. Lấy địa chỉ IP Tailscale của máy ảo
+        run: |
+          sleep 5
+          TS_IP=$(tailscale ip -4)
+          echo "Tailscale IP: $TS_IP"
+          echo "TS_IP=$TS_IP" >> "$GITHUB_ENV"
+          tailscale status
+
+      - name: 4. Giữ máy ảo sống để bạn thao tác
+        run: |
+          echo "===================================================="
+          echo " Máy ảo macOS đã sẵn sàng!"
+          echo ""
+          echo " Cách kết nối:"
+          echo " 1. Cài Tailscale trên máy của bạn và đăng nhập"
+          echo "    cùng tài khoản (tailnet) với runner."
+          echo " 2. Kết nối tới: $TS_IP"
+          echo "    (Cổng 5900 - VNC mặc định của macOS)"
+          echo " 3. Dùng TightVNC hoặc TigerVNC Viewer (KHÔNG dùng RealVNC):"
+          echo "    - KHÔNG nhập username, chỉ nhập mật khẩu VNC."
+          echo " 4. Máy đã bật AUTO-LOGIN cho user '$PW_USER':"
+          echo "    nếu thấy desktop là OK. Nếu hiện màn hình login,"
+          echo "    đăng nhập bằng user '$PW_USER' + mật khẩu đã đặt."
+          echo "===================================================="
+          
+          # Giữ display hoạt động và giữ job chạy cho đến khi bạn cancel
+          sudo caffeinate -dis -i &
+          while true; do
+            sudo caffeinate -u -t 2 || true
+            sleep 60
+          done
