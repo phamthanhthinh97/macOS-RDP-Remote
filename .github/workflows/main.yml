@@ -24,14 +24,11 @@ jobs:
         run: |
           KICKSTART=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
 
-          echo "== Bật Screen Sharing (ARD) cho tất cả user, full quyền =="
-          sudo "$KICKSTART" -configure -allowAccessFor -allUsers -privs -all
-          sudo "$KICKSTART" -configure -access -on
-          sudo "$KICKSTART" -configure -clientopts -setvnclegacy -vncLegacy yes -setvncpw -vncpw "$VNC_PW"
-          sudo "$KICKSTART" -restart -agent
+          echo "== Khởi động lại ARD Agent + Console (để giữ session desktop) =="
+          sudo "$KICKSTART" -restart -agent -console
           sudo "$KICKSTART" -activate
-          # KHÔNG dùng -restart -console: nó sẽ kill phiên desktop của runner
-          # và làm máy kẹt ở login window ảo (vfb) không render -> màn hình đen
+          # KHÔNG dùng cách riêng biệt - chỉ có -restart -agent: nó sẽ đẩy session về login window (vfb)
+          # và làm VNC chỉ xem mà không nhập ctrl đ được.
 
           echo "== Cấp quyền TCC ScreenCapture cho screensharing (BẮT BUỘC) =="
           # macOS 13+: daemon/agent screen sharing cần quyền Screen Recording.
