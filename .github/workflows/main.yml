@@ -52,6 +52,18 @@ jobs:
           EOS
           sudo /bin/bash -c 'sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" < /tmp/tccfix.sql' && echo "TCC ScreenCapture: ĐÃ CẤP" || echo "WARN: cấp TCC thất bại"
 
+          echo "== Cài đặt RustDesk =="
+          sudo chown -R vncadmin /opt/homebrew
+          brew install --cask rustdesk
+          # Thêm quyền TCC cho RustDesk (để điều khiển)
+          cat >> /tmp/tccfix.sql <<'EOS'
+          INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded)
+          VALUES
+          ('kTCCServiceScreenCapture', 'com.carriez.rustdesk', 0, 2, 2, 1, NULL, NULL, NULL, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER)),
+          ('kTCCServiceAccessibility', 'com.carriez.rustdesk', 0, 2, 2, 1, NULL, NULL, NULL, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER));
+          EOS
+          sudo /bin/bash -c 'sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" < /tmp/tccfix.sql'
+
           echo "== Tạo user 'vncadmin' (admin) để login GUI/VNC =="
           # LƯU Ý: KHÔNG reset mật khẩu user 'runner' — nó có SecureToken và
           # sysadminctl/dscl luôn bị từ chối ("Operation is not permitted
