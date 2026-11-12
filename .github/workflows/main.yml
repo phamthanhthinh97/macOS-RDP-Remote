@@ -18,15 +18,34 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
-      - name: 1. Kích hoạt VNC + tạo user vncadmin + auto-login
+      - name: 1. Kích hoạt VNC + tạo user vncadmin + cấp quyền TCC
         env:
           VNC_PW: ${{ github.event.inputs.passphrase }}
         run: |
           KICKSTART=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
 
           echo "== Bật Screen Sharing (ARD) cho tất cả user, full quyền =="
-          sudo "$KICKSTART" -activate -configure -allowAccessFor -allUsers -privs -all
+          sudo "$KICKSTART" -configure -allowAccessFor -allUsers -privs -all
+          sudo "$KICKSTART" -configure -access -on
           sudo "$KICKSTART" -configure -clientopts -setvnclegacy -vncLegacy yes -setvncpw -vncpw "$VNC_PW"
+          sudo "$KICKSTART" -activate
+          # KHÔNG dùng -restart -console: nó sẽ kill phiên desktop của runner
+          # và làm máy kẹt ở login window ảo (vfb) không render -> màn hình đen
+          sudo "$KICKSTART" -restart -agent
+
+          echo "== Cấp quyền TCC ScreenCapture cho screensharing (BẮT BUỘC) =="
+          # macOS 13+: daemon/agent screen sharing cần quyền Screen Recording.
+          # Không có -> server VNC trả framebuffer rỗng (0 rects) -> màn đen.
+          cat > /tmp/tccfix.sql <<'EOS'
+          INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded)
+          VALUES
+          ('kTCCServiceScreenCapture', '/System/Library/CoreServices/RemoteManagement/screensharingd.bundle/Contents/MacOS/screensharingd', 0, 2, 2, 1, NULL, NULL, NULL, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER)),
+          ('kTCCServiceScreenCapture', 'com.apple.screensharing.daemon', 0, 2, 2, 1, NULL, NULL, NULL, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER)),
+          ('kTCCServiceScreenCapture', 'com.apple.screensharing.daemon', 1, 2, 2, 1, NULL, NULL, NULL, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER)),
+          ('kTCCServiceScreenCapture', 'com.apple.screensharing.agent', 0, 2, 2, 1, NULL, NULL, NULL, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER)),
+          ('kTCCServiceScreenCapture', 'com.apple.screensharing.agent', 1, 2, 2, 1, NULL, NULL, NULL, 'UNUSED', NULL, 0, CAST(strftime('%s','now') AS INTEGER), NULL, NULL, 'UNUSED', CAST(strftime('%s','now') AS INTEGER));
+          EOS
+          sudo /bin/bash -c 'sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" < /tmp/tccfix.sql' && echo "TCC ScreenCapture: ĐÃ CẤP" || echo "WARN: cấp TCC thất bại"
 
           echo "== Tạo user 'vncadmin' (admin) để login GUI/VNC =="
           # LƯU Ý: KHÔNG reset mật khẩu user 'runner' — nó có SecureToken và
@@ -43,7 +62,7 @@ jobs:
           sudo createhomedir -c -u vncadmin > /dev/null 2>&1 || true
           echo "PW_USER=vncadmin" >> "$GITHUB_ENV"
 
-          echo "== Cấu hình AUTO-LOGIN cho vncadmin =="
+          echo "== Cấu hình AUTO-LOGIN cho vncadmin (dự phòng) =="
           # Tạo file /etc/kcpassword (mật khẩu mã hóa XOR đặc trưng của macOS)
           python3 - <<'EOF'
           import os
@@ -65,23 +84,21 @@ jobs:
           sudo pmset -a autopoweroff 0 standby 0 || true
           defaults -currentHost write com.apple.screensaver idleTime 0 || true
 
-          echo "== Đặt wallpaper (runner image mặc định là ảnh ĐEN đặc ->) =="
-          # Nguyên nhân "màn hình đen": wallpaper mặc định của runner image là
-          # Solid Colors/Black.png, desktop không có icon nên trông như chết.
+          echo "== Đặt wallpaper (runner image mặc định là ảnh ĐEN đặc) =="
           WALLPAPER="/System/Library/Desktop Pictures/Sonoma.heic"
           sudo launchctl asuser 501 sudo -u runner osascript -e "tell application \"System Events\" to set picture of every desktop to \"$WALLPAPER\"" 2>/dev/null || true
           sudo launchctl asuser 1001 sudo -u vncadmin osascript -e "tell application \"System Events\" to set picture of every desktop to \"$WALLPAPER\"" 2>/dev/null || true
 
-          echo "== Restart console để auto-login tạo phiên GUI mới cho vncadmin =="
+          echo "== Đánh thức màn hình =="
           sudo caffeinate -u -t 5 || true
-          sudo "$KICKSTART" -restart -agent -console
-          sleep 15
+          sleep 5
 
           echo "== CHẨN ĐOÁN =="
           echo "Console owner: $(stat -f '%Su' /dev/console 2>/dev/null || echo 'none')"
           echo "AutoLogin user: $(sudo defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || echo 'none')"
           pgrep -x WindowServer >/dev/null && echo "WindowServer: ĐANG CHẠY (phiên GUI đã mở!)" || echo "WindowServer: CHƯA CHẠY"
           who || true
+          sudo /bin/bash -c 'sqlite3 "/Library/Application Support/com.apple.TCC/TCC.db" "SELECT client, client_type, auth_value FROM access WHERE service=\x27kTCCServiceScreenCapture\x27"' 2>/dev/null || true
 
           IP=$(ipconfig getifaddr en0 || echo 'khong-lay-duoc-IP-en0')
           echo "Local IP: $IP"
@@ -103,7 +120,7 @@ jobs:
 
       - name: 3.5. Bật SSH debug (key chỉ đọc từ máy của chủ repo)
         env:
-          DEBUG_PUBKEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAiafsD94V8vcFb4JEUC9y8NO2V6iw5cZWIDD8YyF7MD opencode-debug
+          DEBUG_PUBKEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAICjKF7apQJgq1ZysUs93jTRA4mYHfXIIfeQR6t+ZQnUP opencode-debug
         run: |
           sudo systemsetup -setremotelogin on 2>/dev/null || true
           for u in runner vncadmin; do
