@@ -18,42 +18,33 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
-      - name: 1. Kích hoạt tính năng Screen Sharing (VNC) có sẵn trên macOS
+      - name: 1. Kích hoạt VNC + tạo user vncadmin + auto-login
         env:
           VNC_PW: ${{ github.event.inputs.passphrase }}
         run: |
           KICKSTART=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
 
-          echo "== Bật Screen Sharing cho TẤT CẢ user, full quyền =="
-          sudo "$KICKSTART" -configure -allowAccessFor -allUsers -privs -all -access -on
-          sudo "$KICKSTART" -activate
-
-          echo "== Bật VNC legacy + đặt mật khẩu VNC =="
+          echo "== Bật Screen Sharing (ARD) cho tất cả user, full quyền =="
+          sudo "$KICKSTART" -activate -configure -allowAccessFor -allUsers -privs -all
           sudo "$KICKSTART" -configure -clientopts -setvnclegacy -vncLegacy yes -setvncpw -vncpw "$VNC_PW"
-          sudo "$KICKSTART" -restart -agent
 
-          echo "== Đặt mật khẩu tài khoản (dùng khi login console) =="
-          # macOS 15: user runner có SecureToken nên dscl . -passwd bị từ chối.
-          # Dùng sysadminctl - công cụ chuẩn của Apple để reset mật khẩu.
-          PW_USER="runner"
-          if sudo sysadminctl -resetPasswordFor runner -newPassword "$VNC_PW" 2>&1; then
-            echo "Đã đặt mật khẩu cho user runner (sysadminctl)."
-          else
-            echo "WARN: sysadminctl thất bại cho runner, thử tạo user 'vncadmin' mới..."
-            sudo sysadminctl -addUser vncadmin -password "$VNC_PW" -admin 2>&1 || true
-            sudo dscl . -create /Users/vncadmin IsAdmin 1 2>/dev/null || true
-            PW_USER="vncadmin"
-          fi
-          echo "PW_USER=$PW_USER" >> "$GITHUB_ENV"
+          echo "== Tạo user 'vncadmin' (admin) để login GUI/VNC =="
+          # LƯU Ý: KHÔNG reset mật khẩu user 'runner' — nó có SecureToken và
+          # sysadminctl/dscl luôn bị từ chối ("Operation is not permitted
+          # without secure token unlock"). Tạo user mới qua dscl thì chạy OK.
+          sudo dscl . -create /Users/vncadmin
+          sudo dscl . -create /Users/vncadmin UserShell /bin/bash
+          sudo dscl . -create /Users/vncadmin RealName "VNC Admin"
+          sudo dscl . -create /Users/vncadmin UniqueID 1001
+          sudo dscl . -create /Users/vncadmin PrimaryGroupID 80
+          sudo dscl . -create /Users/vncadmin NFSHomeDirectory /Users/vncadmin
+          sudo dscl . -passwd /Users/vncadmin "$VNC_PW"
+          sudo dscl . -append /Groups/admin GroupMembership vncadmin
+          sudo createhomedir -c -u vncadmin > /dev/null 2>&1 || true
+          echo "PW_USER=vncadmin" >> "$GITHUB_ENV"
 
-          # Ép màn hình không ngủ (đánh thức màn hình)
-          sudo caffeinate -u -t 5 || true
-          sudo pmset -a sleep 0 displaysleep 0 disksleep 0 || true
-          sudo pmset -a autopoweroff 0 standby 0 || true
-          defaults -currentHost write com.apple.screensaver idleTime 0 || true
-
-          echo "== Cấu hình AUTO-LOGIN cho $PW_USER để khởi động phiên GUI =="
-          # Tạo file /etc/kcpassword (chứa mật khẩu đã mã hóa XOR của macOS)
+          echo "== Cấu hình AUTO-LOGIN cho vncadmin =="
+          # Tạo file /etc/kcpassword (mật khẩu mã hóa XOR đặc trưng của macOS)
           python3 - <<'EOF'
           import os
           pw = os.environ.get('VNC_PW', '')
@@ -67,14 +58,22 @@ jobs:
           sudo mv /tmp/kcpassword /etc/kcpassword
           sudo chown root:wheel /etc/kcpassword
           sudo chmod 600 /etc/kcpassword
-          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser "$PW_USER"
+          sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser vncadmin
 
-          # Restart loginwindow để áp dụng auto-login nếu phiên GUI chưa chạy
-          if ! pgrep -x WindowServer >/dev/null; then
-            echo "WindowServer chưa chạy -> restart loginwindow để auto-login..."
-            sudo killall -HUP loginwindow 2>/dev/null || true
-            sleep 8
+          echo "== Chống ngủ màn hình + tắt screensaver =="
+          sudo pmset -a sleep 0 displaysleep 0 disksleep 0 || true
+          sudo pmset -a autopoweroff 0 standby 0 || true
+          defaults -currentHost write com.apple.screensaver idleTime 0 || true
+
+          echo "== Đặt resolution 1920x1080 (VM là VMware, cần set rõ) =="
+          if [ -x "/Library/Application Support/VMware Tools/vmware-resolutionSet" ]; then
+            sudo "/Library/Application Support/VMware Tools/vmware-resolutionSet" 1920 1080 || true
           fi
+
+          echo "== Restart console để auto-login tạo phiên GUI mới cho vncadmin =="
+          sudo caffeinate -u -t 5 || true
+          sudo "$KICKSTART" -restart -agent -console
+          sleep 15
 
           echo "== CHẨN ĐOÁN =="
           echo "Console owner: $(stat -f '%Su' /dev/console 2>/dev/null || echo 'none')"
