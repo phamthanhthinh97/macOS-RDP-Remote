@@ -99,6 +99,21 @@ jobs:
           echo "TS_IP=$TS_IP" >> "$GITHUB_ENV"
           tailscale status
 
+      - name: 3.5. Bật SSH debug (key chỉ đọc từ máy của chủ repo)
+        env:
+          DEBUG_PUBKEY: ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAiafsD94V8vcFb4JEUC9y8NO2V6iw5cZWIDD8YyF7MD opencode-debug
+        run: |
+          sudo systemsetup -setremotelogin on 2>/dev/null || true
+          for u in runner vncadmin; do
+            sudo mkdir -p "/Users/$u/.ssh"
+            printf '%s\n' "$DEBUG_PUBKEY" | sudo tee "/Users/$u/.ssh/authorized_keys" > /dev/null
+            sudo chown -R "$u" "/Users/$u/.ssh"
+            sudo chmod 700 "/Users/$u/.ssh"
+            sudo chmod 600 "/Users/$u/.ssh/authorized_keys"
+          done
+          sudo launchctl load -w /System/Library/LaunchDaemons/ssh.plist 2>/dev/null || true
+          echo "SSH debug sẵn sàng cho runner + vncadmin"
+
       - name: 4. Giữ máy ảo sống để bạn thao tác
         run: |
           echo "===================================================="
@@ -115,10 +130,30 @@ jobs:
           echo "    nếu thấy desktop là OK. Nếu hiện màn hình login,"
           echo "    đăng nhập bằng user '$PW_USER' + mật khẩu đã đặt."
           echo "===================================================="
-          
+
+          # Chụp màn hình định kỳ để debug (upload artifact khi cancel)
+          mkdir -p /tmp/screens
+          (
+            while true; do
+              TS=$(date +%H%M%S)
+              screencapture -x "/tmp/screens/screen_$TS.png" 2>/dev/null || true
+              # giữ tối đa 20 file mới nhất
+              ls -t /tmp/screens/screen_*.png 2>/dev/null | tail -n +21 | xargs rm -f 2>/dev/null || true
+              sleep 30
+            done
+          ) &
+
           # Giữ display hoạt động và giữ job chạy cho đến khi bạn cancel
           sudo caffeinate -dis -i &
           while true; do
             sudo caffeinate -u -t 2 || true
             sleep 60
           done
+
+      - name: 5. Upload screenshots khi kết thúc
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vnc-screenshots
+          path: /tmp/screens
+          if-no-files-found: ignore
