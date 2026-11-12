@@ -89,10 +89,23 @@ jobs:
           sudo pmset -a autopoweroff 0 standby 0 || true
           defaults -currentHost write com.apple.screensaver idleTime 0 || true
 
-          echo "== Đặt wallpaper (runner image mặc định là ảnh ĐEN đặc) =="
-          WALLPAPER="/System/Library/Desktop Pictures/Sonoma.heic"
-          sudo launchctl asuser 501 sudo -u runner osascript -e "tell application \"System Events\" to set picture of every desktop to \"$WALLPAPER\"" 2>/dev/null || true
-          sudo launchctl asuser 1001 sudo -u vncadmin osascript -e "tell application \"System Events\" to set picture of every desktop to \"$WALLPAPER\"" 2>/dev/null || true
+          echo "== Đặt wallpaper (Màu đơn sắc để tối ưu VNC) =="
+          # Dùng màu xám đơn sắc để giảm băng thông truyền tải pixel
+          sudo launchctl asuser 501 sudo -u runner osascript -e 'tell application "System Events" to set picture of every desktop to "/System/Library/Desktop Pictures/Solid Colors/Gray Dark.png"' 2>/dev/null || true
+          sudo launchctl asuser 1001 sudo -u vncadmin osascript -e 'tell application "System Events" to set picture of every desktop to "/System/Library/Desktop Pictures/Solid Colors/Gray Dark.png"' 2>/dev/null || true
+
+          echo "== Tối ưu hiệu ứng hệ thống (Giảm lag VNC) =="
+          for u in runner vncadmin; do
+            uid=$(id -u $u)
+            sudo launchctl asuser $uid sudo -u $u defaults write com.apple.universalaccess reduceTransparency -bool true
+            sudo launchctl asuser $uid sudo -u $u defaults write com.apple.universalaccess reduceMotion -bool true
+            sudo launchctl asuser $uid sudo -u $u defaults write com.apple.WindowManager StandardClickToShowDesktop -bool false
+            # Tắt hiệu ứng mở app và thu nhỏ cửa sổ
+            sudo launchctl asuser $uid sudo -u $u defaults write com.apple.dock launchanim -bool false
+            sudo launchctl asuser $uid sudo -u $u defaults write com.apple.dock mineffect -string "scale"
+            # Tắt shadows (đổ bóng) của cửa sổ
+            sudo launchctl asuser $uid sudo -u $u defaults write com.apple.screencapture disable-shadow -bool true
+          done
 
           echo "== Đánh thức màn hình =="
           sudo caffeinate -u -t 5 || true
