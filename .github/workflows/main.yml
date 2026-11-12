@@ -24,11 +24,17 @@ jobs:
         run: |
           KICKSTART=/System/Library/CoreServices/RemoteManagement/ARDAgent.app/Contents/Resources/kickstart
 
-          echo "== Khởi động lại ARD Agent + Console (để giữ session desktop) =="
+          echo "== Cấu hình Screen Sharing (ARD) =="
+          sudo "$KICKSTART" -configure -allowAccessFor -allUsers -privs -all
+          sudo "$KICKSTART" -configure -clientopts -setvnclegacy -vncLegacy yes
+          
+          echo "== Đặt VNC password qua VNCSettings.txt (chuẩn Apple) =="
+          # macOS 14/15 đôi khi chặn set password qua kickstart, dùng VNCSettings trực tiếp.
+          echo "$VNC_PW" | perl -we 'BEGIN { @k = unpack "C*", pack "H*", "1734516E8BA8C5E2FF1C39567390ADCA"}; $_ = <>; chomp; s/^(.{8}).*/$1/; @p = unpack "C*", $_; foreach (@k) { printf "%02X", $_ ^ (shift @p || 0) }; print "\n"' | sudo tee /Library/Preferences/com.apple.VNCSettings.txt
+
+          echo "== Khởi động lại ARD Agent + Console =="
           sudo "$KICKSTART" -restart -agent -console
           sudo "$KICKSTART" -activate
-          # KHÔNG dùng cách riêng biệt - chỉ có -restart -agent: nó sẽ đẩy session về login window (vfb)
-          # và làm VNC chỉ xem mà không nhập ctrl đ được.
 
           echo "== Cấp quyền TCC ScreenCapture cho screensharing (BẮT BUỘC) =="
           # macOS 13+: daemon/agent screen sharing cần quyền Screen Recording.
