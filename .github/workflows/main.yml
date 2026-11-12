@@ -55,15 +55,15 @@ jobs:
           echo "== Cấu hình AUTO-LOGIN cho $PW_USER để khởi động phiên GUI =="
           # Tạo file /etc/kcpassword (chứa mật khẩu đã mã hóa XOR của macOS)
           python3 - <<'EOF'
-import os
-pw = os.environ.get('VNC_PW', '')
-key = [0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F]
-encoded = [ord(c) ^ key[i % len(key)] for i, c in enumerate(pw)]
-while len(encoded) % 12 != 0 or len(encoded) == 0:
-    encoded.append(key[len(encoded) % len(key)])
-with open('/tmp/kcpassword', 'wb') as f:
-    f.write(bytes(encoded))
-EOF
+          import os
+          pw = os.environ.get('VNC_PW', '')
+          key = [0x7D, 0x89, 0x52, 0x23, 0xD2, 0xBC, 0xDD, 0xEA, 0xA3, 0xB9, 0x1F]
+          encoded = [ord(c) ^ key[i % len(key)] for i, c in enumerate(pw)]
+          while len(encoded) % 12 != 0 or len(encoded) == 0:
+              encoded.append(key[len(encoded) % len(key)])
+          with open('/tmp/kcpassword', 'wb') as f:
+              f.write(bytes(encoded))
+          EOF
           sudo mv /tmp/kcpassword /etc/kcpassword
           sudo chown root:wheel /etc/kcpassword
           sudo chmod 600 /etc/kcpassword
@@ -82,7 +82,7 @@ EOF
           pgrep -x WindowServer >/dev/null && echo "WindowServer: ĐANG CHẠY (phiên GUI đã mở!)" || echo "WindowServer: CHƯA CHẠY"
           who || true
 
-          IP=$(ipconfig getifaddr en0)
+          IP=$(ipconfig getifaddr en0 || echo 'khong-lay-duoc-IP-en0')
           echo "Local IP: $IP"
 
       - name: 2. Cài đặt và kết nối Tailscale
