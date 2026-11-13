@@ -262,6 +262,52 @@ jobs:
             sudo launchctl asuser "$uuid" sudo -u "$u" defaults write com.apple.screensaver askForPassword -int 0 2>/dev/null || true
           done
 
+          echo "== Đặt độ phân giải màn hình 1280x720 =="
+          cat > /tmp/setres.swift <<'SWIFT'
+          import Foundation
+          import CoreGraphics
+
+          let id = CGMainDisplayID()
+          let args = CommandLine.arguments
+          let cmd = args.count > 1 ? args[1] : "get"
+
+          func current() -> String {
+              if let m = CGDisplayCopyDisplayMode(id) { return "\(m.width)x\(m.height)" }
+              return "unknown"
+          }
+
+          if cmd == "get" { print(current()); exit(0) }
+
+          let wantW = args.count > 2 ? (Int(args[2]) ?? 1280) : 1280
+          let wantH = args.count > 3 ? (Int(args[3]) ?? 720) : 720
+
+          if cmd == "list" {
+              if let modes = CGDisplayCopyAllDisplayModes(id, nil) as? [CGDisplayMode] {
+                  for m in modes { print("\(m.width)x\(m.height) id=\(m.ioDisplayModeID)") }
+              }
+              exit(0)
+          }
+
+          if cmd == "set" {
+              guard let modes = CGDisplayCopyAllDisplayModes(id, nil) as? [CGDisplayMode] else { print("SET no-modes"); exit(1) }
+              guard let m = modes.filter({ $0.width == wantW && $0.height == wantH }).max(by: { $0.refreshRate < $1.refreshRate }) else { print("SET no-match \(wantW)x\(wantH)"); exit(1) }
+              var config: CGDisplayConfigRef?
+              let b = CGBeginDisplayConfiguration(&config)
+              guard b == .success, let cfg = config else { print("SET begin-err=\(b.rawValue)"); exit(1) }
+              let c = CGConfigureDisplayWithDisplayMode(cfg, id, m, nil)
+              let d = CGCompleteDisplayConfiguration(cfg, .permanently)
+              print("SET \(wantW)x\(wantH) configure=\(c.rawValue) complete=\(d.rawValue) now=\(current())")
+              exit(0)
+          }
+          SWIFT
+          swiftc -O /tmp/setres.swift -o /tmp/setres >/dev/null 2>&1 || true
+          if [ -x /tmp/setres ]; then
+            sudo launchctl asuser "$CONSOLE_UID" /tmp/setres set 1280 720 2>&1 | sudo tee /tmp/res_diag.log || true
+          else
+            echo "WARN: swiftc lỗi, dùng interpreter"
+            sudo launchctl asuser "$CONSOLE_UID" /usr/bin/swift /tmp/setres.swift set 1280 720 2>&1 | sudo tee /tmp/res_diag.log || true
+          fi
+
           echo "== Đặt wallpaper (Màu đơn sắc để tối ưu VNC) =="
           # Dùng màu xám đơn sắc để giảm băng thông truyền tải pixel
           sudo launchctl asuser 501 sudo -u runner osascript -e 'tell application "System Events" to set picture of every desktop to "/System/Library/Desktop Pictures/Solid Colors/Gray Dark.png"' 2>/dev/null || true
@@ -379,6 +425,13 @@ jobs:
             sudo pkill -9 -f mbuseragent 2>/dev/null || true
             # Tắt screensaver nếu nó bật lên (tránh khóa màn hình)
             sudo pkill -x ScreenSaverEngine 2>/dev/null || true
+            # Giữ độ phân giải 1280x720 (một số sự kiện login/VNC có thể reset)
+            if [ -x /tmp/setres ]; then
+              CUR_RES=$(sudo launchctl asuser "$CONSOLE_UID" /tmp/setres get 2>/dev/null || echo unknown)
+              if [ "$CUR_RES" != "1280x720" ]; then
+                sudo launchctl asuser "$CONSOLE_UID" /tmp/setres set 1280 720 >/dev/null 2>&1 || true
+              fi
+            fi
             # Đảm bảo RustDesk luôn chạy trong phiên console
             if ! pgrep -f '/Applications/RustDesk.app/Contents/MacOS/RustDesk' >/dev/null 2>&1; then
               sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
