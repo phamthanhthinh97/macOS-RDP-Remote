@@ -326,6 +326,48 @@ jobs:
             sudo launchctl asuser $uid sudo -u $u defaults write com.apple.screencapture disable-shadow -bool true
           done
 
+          echo "== Chặn macOS tải/cài bản cập nhật =="
+          sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool false 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticDownload -bool false 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticallyInstallMacOSUpdates -bool false 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate CriticalUpdateInstall -bool false 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate ConfigDataInstall -bool false 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.commerce AutoUpdate -bool false 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.commerce AutoUpdateRestartRequired -bool false 2>/dev/null || true
+          sudo softwareupdate --schedule off 2>/dev/null || true
+          sudo pkill -f softwareupdate 2>/dev/null || true
+          sudo pkill -f 'SoftwareUpdate' 2>/dev/null || true
+
+          echo "== Tắt Spotlight index (giảm CPU/disk) =="
+          sudo mdutil -i off -a 2>/dev/null || true
+
+          echo "== Tắt dịch vụ nền không cần thiết =="
+          # Phân tích ảnh/video + Siri/trợ lý
+          for uid in 501 1001; do
+            sudo launchctl disable "gui/$uid/com.apple.photoanalysisd" 2>/dev/null || true
+            sudo launchctl disable "gui/$uid/com.apple.mediaanalysisd" 2>/dev/null || true
+            sudo launchctl disable "gui/$uid/com.apple.Siri" 2>/dev/null || true
+            sudo launchctl disable "gui/$uid/com.apple.assistantd" 2>/dev/null || true
+          done
+          sudo pkill -x photoanalysisd 2>/dev/null || true
+          sudo pkill -x mediaanalysisd 2>/dev/null || true
+          sudo pkill -x assistantd 2>/dev/null || true
+          # Tắt Siri + gợi ý
+          for u in runner vncadmin; do
+            uid=$(id -u "$u")
+            sudo launchctl asuser "$uid" sudo -u "$u" defaults write com.apple.assistant.support 'Assistant Enabled' -bool false 2>/dev/null || true
+            sudo launchctl asuser "$uid" sudo -u "$u" defaults write com.apple.Siri StatusMenuVisible -bool false 2>/dev/null || true
+            sudo launchctl asuser "$uid" sudo -u "$u" defaults write com.apple.Siri UserHasDeclinedEnable -bool true 2>/dev/null || true
+          done
+          # Tắt gửi chẩn đoán/analytics
+          sudo defaults write "/Library/Application Support/CrashReporter/DiagnosticMessagesHistory.plist" AutoSubmit -bool false 2>/dev/null || true
+          sudo defaults write "/Library/Application Support/CrashReporter/DiagnosticMessagesHistory.plist" ThirdPartyDataSubmit -bool false 2>/dev/null || true
+          sudo defaults write com.apple.SubmitDiagInfo AutoSubmit -bool false 2>/dev/null || true
+          sudo chmod 644 "/Library/Application Support/CrashReporter/DiagnosticMessagesHistory.plist" 2>/dev/null || true
+          # Tắt Time Machine local snapshots
+          sudo tmutil disable 2>/dev/null || true
+          echo "Tối ưu: đã tắt auto-update, Spotlight index, Siri, analytics, Time Machine"
+
           echo "== Đánh thức màn hình =="
           sudo caffeinate -u -t 5 || true
           sleep 5
