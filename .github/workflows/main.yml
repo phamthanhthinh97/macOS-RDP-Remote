@@ -18,6 +18,13 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v6
 
+      - name: 0. Bypass macOS Setup Assistant
+        run: |
+          # Tạo file .AppleSetupDone để macOS tin rằng máy đã qua bước cài đặt ban đầu
+          sudo touch /var/db/.AppleSetupDone
+          sudo chmod 644 /var/db/.AppleSetupDone
+          echo "Đã tạo .AppleSetupDone - bypass màn hình Setup Assistant"
+
       - name: 1. Kích hoạt VNC + tạo user vncadmin + cấp quyền TCC
         env:
           VNC_PW: ${{ github.event.inputs.passphrase }}
