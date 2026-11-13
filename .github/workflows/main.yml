@@ -158,36 +158,9 @@ jobs:
           echo "GUI user hiện tại: $CONSOLE_USER ($CONSOLE_UID)"
           rd_timeout() { perl -e 'alarm shift; exec @ARGV' 20 "$@" 2>/dev/null; }
           if [ -x "$RUSTDESK_BIN" ]; then
-            # Mở RustDesk ngay trong phiên console đang active (không cần VNC)
-            sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
-            # Đợi RustDesk thực sự chạy (tối đa ~60s) rồi mới đặt mật khẩu
-            for i in $(seq 1 30); do
-              pgrep -f '/Applications/RustDesk.app/Contents/MacOS/RustDesk' >/dev/null 2>&1 && break
-              sleep 2
-            done
-            sleep 5
-            # Đặt mật khẩu cố định (Unattended Access) — BẮT BUỘC chạy bằng root.
-            # RustDesk cần thời gian khởi tạo IPC nên retry đến khi config ghi nhận.
-            RD_CFG="/Users/$CONSOLE_USER/Library/Preferences/com.carriez.RustDesk/RustDesk.toml"
-            PW_OK=0
-            for attempt in 1 2 3 4 5 6; do
-              rd_timeout sudo "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
-              if sudo grep -q "password = '[^']" "$RD_CFG" 2>/dev/null; then
-                PW_OK=1
-                echo "RustDesk: mật khẩu cố định ĐÃ đặt (lần $attempt)"
-                break
-              fi
-              sleep 5
-            done
-            [ "$PW_OK" -eq 1 ] || echo "WARN: chưa xác nhận được mật khẩu RustDesk trong config"
-            # Lấy RustDesk ID
-            RD_ID=$(rd_timeout sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" "$RUSTDESK_BIN" --get-id || rd_timeout "$RUSTDESK_BIN" --get-id || echo 'unknown')
-            echo "RustDesk ID: $RD_ID"
-            echo "RD_ID=$RD_ID" >> "$GITHUB_ENV"
-            # LaunchAgent: tự mở RustDesk mỗi khi user login
+            # 1) Tạo LaunchAgent TRƯỚC để LaunchServices khởi động RustDesk trong phiên GUI
             for u in runner vncadmin; do
               id "$u" >/dev/null 2>&1 || continue
-              uid=$(id -u "$u")
               LA_DIR="/Users/$u/Library/LaunchAgents"
               sudo mkdir -p "$LA_DIR"
               sudo tee "$LA_DIR/com.carriez.rustdesk.autostart.plist" > /dev/null <<'EOF'
@@ -211,8 +184,46 @@ jobs:
           </plist>
           EOF
               sudo chown -R "$u" "$LA_DIR"
-              sudo launchctl asuser "$uid" launchctl load -w "$LA_DIR/com.carriez.rustdesk.autostart.plist" >/dev/null 2>&1 || true
             done
+            # 2) Nạp LaunchAgent vào phiên console + kickstart để chắc chắn RustDesk mở
+            LA_CONS="/Users/$CONSOLE_USER/Library/LaunchAgents/com.carriez.rustdesk.autostart.plist"
+            sudo launchctl asuser "$CONSOLE_UID" launchctl load -w "$LA_CONS" >/dev/null 2>&1 || true
+            sudo launchctl asuser "$CONSOLE_UID" launchctl kickstart -k "gui/$CONSOLE_UID/com.carriez.rustdesk.autostart" >/dev/null 2>&1 || true
+            sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
+            # 3) Đợi RustDesk thực sự chạy (tối đa ~90s), fallback mở bằng đường dẫn app
+            RD_RUN=0
+            for i in $(seq 1 45); do
+              if pgrep -f '/Applications/RustDesk.app/Contents/MacOS/RustDesk' >/dev/null 2>&1; then RD_RUN=1; break; fi
+              sleep 2
+            done
+            if [ "$RD_RUN" -eq 0 ]; then
+              sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a /Applications/RustDesk.app >/dev/null 2>&1 || true
+              for i in $(seq 1 15); do
+                pgrep -f '/Applications/RustDesk.app/Contents/MacOS/RustDesk' >/dev/null 2>&1 && { RD_RUN=1; break; }
+                sleep 2
+              done
+            fi
+            echo "RustDesk running=$RD_RUN"
+            sleep 5
+            # 4) Đặt mật khẩu cố định (Unattended Access) — BẮT BUỘC chạy bằng root.
+            # RustDesk cần thời gian khởi tạo IPC nên retry đến khi config ghi nhận.
+            RD_CFG="/Users/$CONSOLE_USER/Library/Preferences/com.carriez.RustDesk/RustDesk.toml"
+            PW_OK=0
+            for attempt in 1 2 3 4 5 6 7 8; do
+              rd_timeout sudo "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
+              if sudo grep -q "password = '[^']" "$RD_CFG" 2>/dev/null; then
+                PW_OK=1
+                echo "RustDesk: mật khẩu cố định ĐÃ đặt (lần $attempt)"
+                break
+              fi
+              sleep 5
+            done
+            [ "$PW_OK" -eq 1 ] || echo "WARN: chưa xác nhận được mật khẩu RustDesk trong config"
+            # 5) Lấy RustDesk ID (sau khi app đã chạy + mật khẩu đã đặt)
+            RD_ID=$(rd_timeout sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" "$RUSTDESK_BIN" --get-id || echo 'unknown')
+            echo "RustDesk ID: $RD_ID"
+            echo "RD_ID=$RD_ID" >> "$GITHUB_ENV"
+            printf 'CONSOLE_USER=%s\nRD_RUN=%s\nPW_OK=%s\nRD_ID=%s\n' "$CONSOLE_USER" "$RD_RUN" "$PW_OK" "$RD_ID" | sudo tee /tmp/rd_diag.log >/dev/null
             echo "RustDesk: đã đặt mật khẩu cố định + bật tự khởi động"
           else
             echo "WARN: Không thấy RustDesk.app, bỏ qua cấu hình RustDesk"
