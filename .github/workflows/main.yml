@@ -147,6 +147,60 @@ jobs:
           echo "Setup Assistant prefs:"
           sudo defaults read /Users/vncadmin/Library/Preferences/com.apple.SetupAssistant 2>/dev/null | head -30 || true
 
+          echo "== Cấu hình RustDesk: mật khẩu cố định + tự khởi động khi login =="
+          RUSTDESK_BIN="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
+          RD_PW="$VNC_PW"
+          CONSOLE_USER="$(stat -f '%Su' /dev/console 2>/dev/null || echo runner)"
+          CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo 501)"
+          rd_timeout() { perl -e 'alarm shift; exec @ARGV' 20 "$@" 2>/dev/null; }
+          if [ -x "$RUSTDESK_BIN" ]; then
+            # Đặt mật khẩu cố định (Unattended Access) cho mọi user có thể đăng nhập
+            for u in runner vncadmin; do
+              id "$u" >/dev/null 2>&1 || continue
+              uid=$(id -u "$u")
+              rd_timeout sudo launchctl asuser "$uid" sudo -u "$u" "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || \
+                rd_timeout sudo -u "$u" "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
+            done
+            # Lấy RustDesk ID
+            RD_ID=$(rd_timeout sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" "$RUSTDESK_BIN" --get-id || rd_timeout "$RUSTDESK_BIN" --get-id || echo 'unknown')
+            echo "RustDesk ID: $RD_ID"
+            echo "RD_ID=$RD_ID" >> "$GITHUB_ENV"
+            # LaunchAgent: tự mở RustDesk mỗi khi user login
+            for u in runner vncadmin; do
+              id "$u" >/dev/null 2>&1 || continue
+              uid=$(id -u "$u")
+              LA_DIR="/Users/$u/Library/LaunchAgents"
+              sudo mkdir -p "$LA_DIR"
+              sudo tee "$LA_DIR/com.carriez.rustdesk.autostart.plist" > /dev/null <<'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>Label</key>
+              <string>com.carriez.rustdesk.autostart</string>
+              <key>ProgramArguments</key>
+              <array>
+                  <string>/usr/bin/open</string>
+                  <string>-a</string>
+                  <string>RustDesk</string>
+              </array>
+              <key>RunAtLoad</key>
+              <true/>
+              <key>LimitLoadToSessionType</key>
+              <string>Aqua</string>
+          </dict>
+          </plist>
+          EOF
+              sudo chown -R "$u" "$LA_DIR"
+              sudo launchctl asuser "$uid" launchctl load -w "$LA_DIR/com.carriez.rustdesk.autostart.plist" >/dev/null 2>&1 || true
+            done
+            # Mở RustDesk ngay trong phiên console đang active (không cần VNC)
+            sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
+            echo "RustDesk: đã đặt mật khẩu cố định + bật tự khởi động"
+          else
+            echo "WARN: Không thấy RustDesk.app, bỏ qua cấu hình RustDesk"
+          fi
+
           echo "== Cấu hình AUTO-LOGIN cho vncadmin (dự phòng) =="
           # Tạo file /etc/kcpassword (mật khẩu mã hóa XOR đặc trưng của macOS)
           python3 - <<'EOF'
@@ -240,20 +294,29 @@ jobs:
 
       - name: 4. Giữ máy ảo sống để bạn thao tác
         run: |
+          CONSOLE_USER="$(stat -f '%Su' /dev/console 2>/dev/null || echo runner)"
+          CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo 501)"
           echo "===================================================="
           echo " Máy ảo macOS đã sẵn sàng!"
           echo ""
-          echo " Cách kết nối:"
-          echo " 1. Cài Tailscale trên máy của bạn và đăng nhập"
-          echo "    cùng tài khoản (tailnet) với runner."
-          echo " 2. Kết nối tới: $TS_IP"
-          echo "    (Cổng 5900 - VNC mặc định của macOS)"
-          echo " 3. Dùng TightVNC hoặc TigerVNC Viewer (KHÔNG dùng RealVNC):"
-          echo "    - KHÔNG nhập username, chỉ nhập mật khẩu VNC."
-          echo " 4. Máy đã bật AUTO-LOGIN cho user '$PW_USER':"
-          echo "    nếu thấy desktop là OK. Nếu hiện màn hình login,"
-          echo "    đăng nhập bằng user '$PW_USER' + mật khẩu đã đặt."
+          echo " >>> KẾT NỐI QUA RUSTDESK (không cần VNC) <<<"
+          echo " 1. Mở RustDesk trên Windows của bạn."
+          echo " 2. Nhập RustDesk ID: ${RD_ID:-unknown}"
+          echo " 3. Nhập mật khẩu: <passphrase bạn đã nhập khi chạy workflow>"
+          echo ""
+          echo " (RustDesk đã được bật tự khởi động khi đăng nhập.)"
+          echo ""
+          echo " Dự phòng qua VNC: $TS_IP:5900 (mật khẩu VNC = passphrase)"
           echo "===================================================="
+          {
+            echo "### macOS đã sẵn sàng"
+            echo ""
+            echo "**RustDesk ID:** \`${RD_ID:-unknown}\`"
+            echo ""
+            echo "**Mật khẩu RustDesk:** passphrase bạn đã nhập khi chạy workflow"
+            echo ""
+            echo "Dự phòng VNC: \`$TS_IP:5900\`"
+          } >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
 
           # Chụp màn hình định kỳ để debug (upload artifact khi cancel)
           mkdir -p /tmp/screens
@@ -273,6 +336,10 @@ jobs:
             # Dọn mọi màn hình Setup Assistant/MacBuddy có thể respawn khi login
             sudo pkill -9 -f 'Setup Assistant.app' 2>/dev/null || true
             sudo pkill -9 -f mbuseragent 2>/dev/null || true
+            # Đảm bảo RustDesk luôn chạy trong phiên console
+            if ! pgrep -f '/Applications/RustDesk.app/Contents/MacOS/RustDesk' >/dev/null 2>&1; then
+              sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
+            fi
             sudo caffeinate -u -t 2 || true
             sleep 30
           done
