@@ -150,8 +150,12 @@ jobs:
           echo "== Cấu hình RustDesk: mật khẩu cố định + tự khởi động khi login =="
           RUSTDESK_BIN="/Applications/RustDesk.app/Contents/MacOS/RustDesk"
           RD_PW="$VNC_PW"
-          CONSOLE_USER="$(stat -f '%Su' /dev/console 2>/dev/null || echo runner)"
-          CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo 501)"
+          # Lấy user đang đăng nhập GUI một cách đáng tin cậy (stat /dev/console hay trả 'root')
+          CONSOLE_USER="$(scutil <<< 'show State:/Users/ConsoleUser' 2>/dev/null | awk '/Name :/ {print $3; exit}')"
+          [ -n "$CONSOLE_USER" ] || CONSOLE_USER="$(who | awk '/console/{print $1; exit}')"
+          [ -n "$CONSOLE_USER" ] || CONSOLE_USER="runner"
+          CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null || echo 501)"
+          echo "GUI user hiện tại: $CONSOLE_USER ($CONSOLE_UID)"
           rd_timeout() { perl -e 'alarm shift; exec @ARGV' 20 "$@" 2>/dev/null; }
           if [ -x "$RUSTDESK_BIN" ]; then
             # Mở RustDesk ngay trong phiên console đang active (không cần VNC)
@@ -231,10 +235,21 @@ jobs:
           sudo chmod 600 /etc/kcpassword
           sudo defaults write /Library/Preferences/com.apple.loginwindow autoLoginUser vncadmin
 
-          echo "== Chống ngủ màn hình + tắt screensaver =="
+          echo "== Chống ngủ màn hình + tắt screensaver + tắt khóa màn hình =="
           sudo pmset -a sleep 0 displaysleep 0 disksleep 0 || true
           sudo pmset -a autopoweroff 0 standby 0 || true
           defaults -currentHost write com.apple.screensaver idleTime 0 || true
+          # Không yêu cầu mật khẩu khi màn hình tắt/screensaver (tránh 'bước đăng nhập')
+          sudo defaults write /Library/Preferences/com.apple.screensaver askForPassword -int 0 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.screensaver askForPasswordDelay -int 0 2>/dev/null || true
+          for u in runner vncadmin; do
+            id "$u" >/dev/null 2>&1 || continue
+            uuid=$(id -u "$u")
+            sudo launchctl asuser "$uuid" sudo -u "$u" defaults -currentHost write com.apple.screensaver askForPassword -int 0 2>/dev/null || true
+            sudo launchctl asuser "$uuid" sudo -u "$u" defaults -currentHost write com.apple.screensaver askForPasswordDelay -int 0 2>/dev/null || true
+            sudo launchctl asuser "$uuid" sudo -u "$u" defaults -currentHost write com.apple.screensaver idleTime -int 0 2>/dev/null || true
+            sudo launchctl asuser "$uuid" sudo -u "$u" defaults write com.apple.screensaver askForPassword -int 0 2>/dev/null || true
+          done
 
           echo "== Đặt wallpaper (Màu đơn sắc để tối ưu VNC) =="
           # Dùng màu xám đơn sắc để giảm băng thông truyền tải pixel
@@ -307,8 +322,10 @@ jobs:
 
       - name: 4. Giữ máy ảo sống để bạn thao tác
         run: |
-          CONSOLE_USER="$(stat -f '%Su' /dev/console 2>/dev/null || echo runner)"
-          CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo 501)"
+          CONSOLE_USER="$(scutil <<< 'show State:/Users/ConsoleUser' 2>/dev/null | awk '/Name :/ {print $3; exit}')"
+          [ -n "$CONSOLE_USER" ] || CONSOLE_USER="$(who | awk '/console/{print $1; exit}')"
+          [ -n "$CONSOLE_USER" ] || CONSOLE_USER="runner"
+          CONSOLE_UID="$(id -u "$CONSOLE_USER" 2>/dev/null || echo 501)"
           echo "===================================================="
           echo " Máy ảo macOS đã sẵn sàng!"
           echo ""
@@ -349,6 +366,8 @@ jobs:
             # Dọn mọi màn hình Setup Assistant/MacBuddy có thể respawn khi login
             sudo pkill -9 -f 'Setup Assistant.app' 2>/dev/null || true
             sudo pkill -9 -f mbuseragent 2>/dev/null || true
+            # Tắt screensaver nếu nó bật lên (tránh khóa màn hình)
+            sudo pkill -x ScreenSaverEngine 2>/dev/null || true
             # Đảm bảo RustDesk luôn chạy trong phiên console
             if ! pgrep -f '/Applications/RustDesk.app/Contents/MacOS/RustDesk' >/dev/null 2>&1; then
               sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
