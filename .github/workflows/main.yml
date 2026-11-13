@@ -27,6 +27,7 @@ jobs:
           # Tắt màn hình iCloud/Accessibility/Siri setup sau khi login
           # Những thiết lập này lưu trong user profile, ta sẽ tạo folder sẵn để Apple không hỏi
           for u in runner vncadmin; do
+            id "$u" >/dev/null 2>&1 || continue
             U_HOME="/Users/$u"
             sudo mkdir -p "$U_HOME/Library/Preferences"
             # Bỏ qua màn hình iCloud setup, Privacy, Siri, etc.
@@ -101,6 +102,16 @@ jobs:
           sudo dscl . -append /Groups/admin GroupMembership vncadmin
           sudo createhomedir -c -u vncadmin > /dev/null 2>&1 || true
           echo "PW_USER=vncadmin" >> "$GITHUB_ENV"
+
+          echo "== Bỏ qua Setup Assistant / iCloud / Siri / Accessibility cho vncadmin =="
+          VNC_HOME="/Users/vncadmin/Library/Preferences"
+          sudo mkdir -p "$VNC_HOME"
+          for k in DidSeeCloudSetup GestureQuizDidRun DidSeePrivacy DidSeeSiriSetup DidSeeAccessibility DidSeeAppearanceSetup DidSeeScreenTime DidSeeTouchIDSetup DidSeeDisplaySetup DidSeeKeyboardSetup DidSeeTrackpadSetup DidSeeWelcome; do
+            sudo defaults write "$VNC_HOME/com.apple.SetupAssistant" "$k" -bool TRUE
+          done
+          sudo defaults write "$VNC_HOME/com.apple.SetupAssistant" LastSeenCloudProductVersion "15.0"
+          sudo defaults write "$VNC_HOME/com.apple.SetupAssistant" LastSeenBuddyBuildVersion "24A335"
+          sudo chown -R vncadmin:staff "/Users/vncadmin/Library"
 
           echo "== Cấu hình AUTO-LOGIN cho vncadmin (dự phòng) =="
           # Tạo file /etc/kcpassword (mật khẩu mã hóa XOR đặc trưng của macOS)
