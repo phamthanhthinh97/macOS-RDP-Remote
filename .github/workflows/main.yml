@@ -342,16 +342,24 @@ jobs:
           sudo mdutil -i off -a 2>/dev/null || true
 
           echo "== Tắt dịch vụ nền không cần thiết =="
-          # Phân tích ảnh/video + Siri/trợ lý
+          # Dịch vụ GUI nặng: phân tích ảnh/video, Siri/gợi ý, thông báo cập nhật
+          GUI_LABELS="com.apple.photoanalysisd com.apple.mediaanalysisd com.apple.photolibraryd com.apple.cloudphotod com.apple.CloudPhotosConfiguration com.apple.assistantd com.apple.siriknowledged com.apple.siriinferenced com.apple.siriactionsd com.apple.sirittsd com.apple.SiriTTSTrainingAgent com.apple.assistant_cdmd com.apple.SoftwareUpdateNotificationManager"
           for uid in 501 1001; do
-            sudo launchctl disable "gui/$uid/com.apple.photoanalysisd" 2>/dev/null || true
-            sudo launchctl disable "gui/$uid/com.apple.mediaanalysisd" 2>/dev/null || true
-            sudo launchctl disable "gui/$uid/com.apple.Siri" 2>/dev/null || true
-            sudo launchctl disable "gui/$uid/com.apple.assistantd" 2>/dev/null || true
+            for lbl in $GUI_LABELS; do
+              sudo launchctl disable "gui/$uid/$lbl" 2>/dev/null || true
+              sudo launchctl bootout "gui/$uid/$lbl" 2>/dev/null || true
+            done
           done
-          sudo pkill -x photoanalysisd 2>/dev/null || true
-          sudo pkill -x mediaanalysisd 2>/dev/null || true
-          sudo pkill -x assistantd 2>/dev/null || true
+          # Dịch vụ hệ thống liên quan cập nhật
+          for lbl in com.apple.softwareupdated com.apple.mobile.softwareupdated com.apple.MobileSoftwareUpdate.CleanupPreparePathService com.apple.softwareupdate_firstrun_tasks com.apple.MobileSoftwareUpdate.CryptegraftService; do
+            sudo launchctl disable "system/$lbl" 2>/dev/null || true
+            sudo launchctl bootout "system/$lbl" 2>/dev/null || true
+          done
+          for p in photoanalysisd mediaanalysisd photolibraryd cloudphotod assistantd siriknowledged siriinferenced siriactionsd sirittsd; do
+            sudo pkill -x "$p" 2>/dev/null || true
+          done
+          # Xóa gói cập nhật đã tải sẵn (giải phóng disk)
+          sudo rm -rf /Library/Updates/* 2>/dev/null || true
           # Tắt Siri + gợi ý
           for u in runner vncadmin; do
             uid=$(id -u "$u")
