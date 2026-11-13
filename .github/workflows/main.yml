@@ -156,7 +156,12 @@ jobs:
           if [ -x "$RUSTDESK_BIN" ]; then
             # Mở RustDesk ngay trong phiên console đang active (không cần VNC)
             sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
-            sleep 5
+            # Đợi RustDesk thực sự chạy (tối đa ~60s) rồi mới đặt mật khẩu
+            for i in $(seq 1 30); do
+              pgrep -f '/Applications/RustDesk.app/Contents/MacOS/RustDesk' >/dev/null 2>&1 && break
+              sleep 2
+            done
+            sleep 3
             # Đặt mật khẩu cố định (Unattended Access) — BẮT BUỘC chạy bằng root
             # (nếu chạy bằng user thường sẽ báo "administrative privileges required")
             rd_timeout sudo "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
@@ -165,6 +170,12 @@ jobs:
               uid=$(id -u "$u")
               rd_timeout sudo launchctl asuser "$uid" sudo -u "$u" "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
             done
+            # Xác nhận đã có mật khẩu trong config của user console
+            if sudo grep -q "password = '[^']" "/Users/$CONSOLE_USER/Library/Preferences/com.carriez.RustDesk/RustDesk.toml" 2>/dev/null; then
+              echo "RustDesk: mật khẩu cố định ĐÃ được đặt"
+            else
+              echo "WARN: chưa xác nhận được mật khẩu RustDesk trong config"
+            fi
             # Lấy RustDesk ID
             RD_ID=$(rd_timeout sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" "$RUSTDESK_BIN" --get-id || rd_timeout "$RUSTDESK_BIN" --get-id || echo 'unknown')
             echo "RustDesk ID: $RD_ID"
