@@ -23,7 +23,23 @@ jobs:
           # Tạo file .AppleSetupDone để macOS tin rằng máy đã qua bước cài đặt ban đầu
           sudo touch /var/db/.AppleSetupDone
           sudo chmod 644 /var/db/.AppleSetupDone
-          echo "Đã tạo .AppleSetupDone - bypass màn hình Setup Assistant"
+          
+          # Tắt màn hình iCloud/Accessibility/Siri setup sau khi login
+          # Những thiết lập này lưu trong user profile, ta sẽ tạo folder sẵn để Apple không hỏi
+          for u in runner vncadmin; do
+            U_HOME="/Users/$u"
+            sudo mkdir -p "$U_HOME/Library/Preferences"
+            # Bỏ qua màn hình iCloud setup, Privacy, Siri, etc.
+            sudo defaults write "$U_HOME/Library/Preferences/com.apple.SetupAssistant" DidSeeCloudSetup -bool TRUE
+            sudo defaults write "$U_HOME/Library/Preferences/com.apple.SetupAssistant" GestureQuizDidRun -bool TRUE
+            sudo defaults write "$U_HOME/Library/Preferences/com.apple.SetupAssistant" LastSeenCloudProductVersion "15.0"
+            sudo defaults write "$U_HOME/Library/Preferences/com.apple.SetupAssistant" LastSeenBuddyBuildVersion "24A335"
+            sudo defaults write "$U_HOME/Library/Preferences/com.apple.SetupAssistant" DidSeePrivacy -bool TRUE
+            sudo defaults write "$U_HOME/Library/Preferences/com.apple.SetupAssistant" DidSeeSiriSetup -bool TRUE
+            sudo defaults write "$U_HOME/Library/Preferences/com.apple.SetupAssistant" DidSeeAccessibility -bool TRUE
+            sudo chown -R "$u" "$U_HOME/Library/Preferences"
+          done
+          echo "Đã cấu hình bypass Setup Assistant cho user runner và vncadmin"
 
       - name: 1. Kích hoạt VNC + tạo user vncadmin + cấp quyền TCC
         env:
