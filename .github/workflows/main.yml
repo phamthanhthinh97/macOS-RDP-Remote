@@ -355,10 +355,8 @@ jobs:
             sudo launchctl disable "system/$lbl" 2>/dev/null || true
             sudo launchctl bootout "system/$lbl" 2>/dev/null || true
           done
-          # Ghi lại cờ tắt kiểm tra tự động SAU khi đã dừng daemon (tránh bị ghi đè)
-          sudo /usr/libexec/PlistBuddy -c "Add :AutomaticCheckEnabled bool false" /Library/Preferences/com.apple.SoftwareUpdate.plist 2>/dev/null || true
-          sudo /usr/libexec/PlistBuddy -c "Set :AutomaticCheckEnabled false" /Library/Preferences/com.apple.SoftwareUpdate.plist 2>/dev/null || true
-          sudo killall cfprefsd 2>/dev/null || true
+          # Ghi lại cờ tắt kiểm tra tự động sau khi đã dừng daemon
+          sudo defaults write /Library/Preferences/com.apple.SoftwareUpdate AutomaticCheckEnabled -bool false 2>/dev/null || true
           for p in photoanalysisd mediaanalysisd photolibraryd cloudphotod assistantd siriknowledged siriinferenced siriactionsd sirittsd; do
             sudo pkill -x "$p" 2>/dev/null || true
           done
