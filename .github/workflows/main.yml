@@ -270,8 +270,11 @@ jobs:
           # Giữ display hoạt động và giữ job chạy cho đến khi bạn cancel
           sudo caffeinate -dis -i &
           while true; do
+            # Dọn mọi màn hình Setup Assistant/MacBuddy có thể respawn khi login
+            sudo pkill -9 -f 'Setup Assistant.app' 2>/dev/null || true
+            sudo pkill -9 -f mbuseragent 2>/dev/null || true
             sudo caffeinate -u -t 2 || true
-            sleep 60
+            sleep 30
           done
 
       - name: 5. Upload screenshots khi kết thúc
