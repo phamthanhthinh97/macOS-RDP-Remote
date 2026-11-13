@@ -154,12 +154,16 @@ jobs:
           CONSOLE_UID="$(stat -f '%u' /dev/console 2>/dev/null || echo 501)"
           rd_timeout() { perl -e 'alarm shift; exec @ARGV' 20 "$@" 2>/dev/null; }
           if [ -x "$RUSTDESK_BIN" ]; then
-            # Đặt mật khẩu cố định (Unattended Access) cho mọi user có thể đăng nhập
+            # Mở RustDesk ngay trong phiên console đang active (không cần VNC)
+            sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
+            sleep 5
+            # Đặt mật khẩu cố định (Unattended Access) — BẮT BUỘC chạy bằng root
+            # (nếu chạy bằng user thường sẽ báo "administrative privileges required")
+            rd_timeout sudo "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
             for u in runner vncadmin; do
               id "$u" >/dev/null 2>&1 || continue
               uid=$(id -u "$u")
-              rd_timeout sudo launchctl asuser "$uid" sudo -u "$u" "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || \
-                rd_timeout sudo -u "$u" "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
+              rd_timeout sudo launchctl asuser "$uid" sudo -u "$u" "$RUSTDESK_BIN" --password "$RD_PW" >/dev/null 2>&1 || true
             done
             # Lấy RustDesk ID
             RD_ID=$(rd_timeout sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" "$RUSTDESK_BIN" --get-id || rd_timeout "$RUSTDESK_BIN" --get-id || echo 'unknown')
@@ -194,8 +198,6 @@ jobs:
               sudo chown -R "$u" "$LA_DIR"
               sudo launchctl asuser "$uid" launchctl load -w "$LA_DIR/com.carriez.rustdesk.autostart.plist" >/dev/null 2>&1 || true
             done
-            # Mở RustDesk ngay trong phiên console đang active (không cần VNC)
-            sudo launchctl asuser "$CONSOLE_UID" sudo -u "$CONSOLE_USER" /usr/bin/open -a RustDesk >/dev/null 2>&1 || true
             echo "RustDesk: đã đặt mật khẩu cố định + bật tự khởi động"
           else
             echo "WARN: Không thấy RustDesk.app, bỏ qua cấu hình RustDesk"
