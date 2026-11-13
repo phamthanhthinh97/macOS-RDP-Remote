@@ -79,6 +79,18 @@ jobs:
           echo "== Cài đặt RustDesk (best-effort, không fail workflow) =="
           sudo chown -R vncadmin /opt/homebrew || true
           brew install --cask rustdesk || true
+          
+          echo "== Gỡ cờ quarantine + nới Gatekeeper để macOS không chặn RustDesk =="
+          # Lỗi 'Apple could not verify ... free of malware' là do cờ quarantine
+          # gắn vào app tải từ internet. Xóa nó để app chạy bình thường.
+          sudo xattr -dr com.apple.quarantine /Applications/RustDesk.app 2>/dev/null || true
+          sudo xattr -cr /Applications/RustDesk.app 2>/dev/null || true
+          # VM CI dùng một lần -> tắt Gatekeeper cho chắc, tránh hộp thoại chặn
+          sudo spctl --master-disable 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.security GKAutoRearm -bool NO 2>/dev/null || true
+          # Chẩn đoán chữ ký (chỉ log, không chặn)
+          spctl --status 2>&1 || true
+          spctl --assess --type execute --verbose=2 /Applications/RustDesk.app 2>&1 || true
           # Thêm quyền TCC cho RustDesk (để điều khiển)
           cat >> /tmp/tccfix.sql <<'EOS'
           INSERT OR REPLACE INTO access (service, client, client_type, auth_value, auth_reason, auth_version, csreq, policy_id, indirect_object_identifier_type, indirect_object_identifier, indirect_object_code_identity, flags, last_modified, pid, pid_version, boot_uuid, last_reminded)
@@ -103,15 +115,37 @@ jobs:
           sudo createhomedir -c -u vncadmin > /dev/null 2>&1 || true
           echo "PW_USER=vncadmin" >> "$GITHUB_ENV"
 
-          echo "== Bỏ qua Setup Assistant / iCloud / Siri / Accessibility cho vncadmin =="
-          VNC_HOME="/Users/vncadmin/Library/Preferences"
-          sudo mkdir -p "$VNC_HOME"
-          for k in DidSeeCloudSetup GestureQuizDidRun DidSeePrivacy DidSeeSiriSetup DidSeeAccessibility DidSeeAppearanceSetup DidSeeScreenTime DidSeeTouchIDSetup DidSeeDisplaySetup DidSeeKeyboardSetup DidSeeTrackpadSetup DidSeeWelcome; do
-            sudo defaults write "$VNC_HOME/com.apple.SetupAssistant" "$k" -bool TRUE
+          echo "== Bỏ qua Setup Assistant (MacBuddy) cho vncadmin =="
+          # Danh sách key chuẩn để MacBuddy coi như user đã hoàn tất onboarding.
+          OS_VER="$(sw_vers -productVersion)"
+          OS_BUILD="$(sw_vers -buildVersion)"
+          SA_KEYS="DidSeeCloudSetup DidSeePrivacy DidSeeTrueTonePrivacy DidSeeTouchIDSetup DidSeeSiriSetup DidSeeActivationLock DidSeeScreenTime DidSeeAccessibility DidSeeAppearanceSetup DidSeeDisplaySetup DidSeeKeyboardSetup DidSeeTrackpadSetup DidSeeWelcome DidSeeSoftwareUpdate DidSeeTerms DidSeeDiagnostics GestureQuizDidRun"
+          seed_sa() {
+            local P="$1"
+            sudo mkdir -p "$P" 2>/dev/null || true
+            for k in $SA_KEYS; do
+              sudo defaults write "$P/com.apple.SetupAssistant" "$k" -bool TRUE 2>/dev/null || true
+            done
+            sudo defaults write "$P/com.apple.SetupAssistant" GestureMovieSeen -string none 2>/dev/null || true
+            sudo defaults write "$P/com.apple.SetupAssistant" LastSeenCloudProductVersion -string "$OS_VER" 2>/dev/null || true
+            sudo defaults write "$P/com.apple.SetupAssistant" LastSeenBuddyBuildVersion -string "$OS_BUILD" 2>/dev/null || true
+          }
+          # (1) User Template: createhomedir sẽ copy các key này cho user mới
+          seed_sa "/System/Library/User Template/Non_localized/Library/Preferences"
+          seed_sa "/System/Library/User Template/English.lproj/Library/Preferences"
+          # (2) Home vncadmin: copy plist đã setup của runner (nếu có) rồi ghi đè đầy đủ
+          sudo cp /Users/runner/Library/Preferences/com.apple.SetupAssistant.plist "/Users/vncadmin/Library/Preferences/" 2>/dev/null || true
+          seed_sa "/Users/vncadmin/Library/Preferences"
+          # (3) Ghi qua đúng phiên của user để cfprefsd nhận (không chỉ sửa file)
+          for k in $SA_KEYS; do
+            sudo -u vncadmin defaults write com.apple.SetupAssistant "$k" -bool TRUE 2>/dev/null || true
           done
-          sudo defaults write "$VNC_HOME/com.apple.SetupAssistant" LastSeenCloudProductVersion "15.0"
-          sudo defaults write "$VNC_HOME/com.apple.SetupAssistant" LastSeenBuddyBuildVersion "24A335"
+          sudo -u vncadmin defaults write com.apple.SetupAssistant GestureMovieSeen -string none 2>/dev/null || true
+          sudo -u vncadmin defaults write com.apple.SetupAssistant LastSeenCloudProductVersion -string "$OS_VER" 2>/dev/null || true
+          sudo -u vncadmin defaults write com.apple.SetupAssistant LastSeenBuddyBuildVersion -string "$OS_BUILD" 2>/dev/null || true
           sudo chown -R vncadmin:staff "/Users/vncadmin/Library"
+          echo "Setup Assistant prefs:"
+          sudo defaults read /Users/vncadmin/Library/Preferences/com.apple.SetupAssistant 2>/dev/null | head -30 || true
 
           echo "== Cấu hình AUTO-LOGIN cho vncadmin (dự phòng) =="
           # Tạo file /etc/kcpassword (mật khẩu mã hóa XOR đặc trưng của macOS)
