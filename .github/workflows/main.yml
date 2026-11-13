@@ -157,6 +157,13 @@ jobs:
           sudo caffeinate -u -t 5 || true
           sleep 5
 
+          echo "== Dọn Setup Assistant (nếu còn sót) =="
+          sudo pkill -9 -f 'Setup Assistant.app' 2>/dev/null || true
+          sudo pkill -9 -f mbuseragent 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeWelcome -bool TRUE 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.SetupAssistant DidSeeAccessibility -bool TRUE 2>/dev/null || true
+          sudo defaults write /Library/Preferences/com.apple.SetupAssistant LastSeenBuddyBuildVersion "24A335" 2>/dev/null || true
+
           echo "== CHẨN ĐOÁN =="
           echo "Console owner: $(stat -f '%Su' /dev/console 2>/dev/null || echo 'none')"
           echo "AutoLogin user: $(sudo defaults read /Library/Preferences/com.apple.loginwindow autoLoginUser 2>/dev/null || echo 'none')"
